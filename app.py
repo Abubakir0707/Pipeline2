@@ -205,9 +205,15 @@ with st.sidebar:
             st.success(f"✅ {len(raw)} leads loaded")
 
     df_all = st.session_state.df_scored
-    industries   = st.multiselect("Industry",
-                                  sorted(df_all["industry"].unique()),
-                                  default=sorted(df_all["industry"].unique()))
+   # Create a safe, sorted list of industry strings
+    industry_options = sorted(df_all["industry"].astype(str).unique())
+        
+     # Update the multiselect to use these options
+    industries = st.multiselect(
+            "Industry",
+            options=industry_options,
+            default=industry_options
+    )
     bmin,bmax    = int(df_all["budget_k"].min()), int(df_all["budget_k"].max())
     budget_range = st.slider("Budget ($k)", bmin, bmax, (bmin, bmax))
     prob_min     = st.slider("Min conv. prob (%)", 0, 100, 0, step=5)
