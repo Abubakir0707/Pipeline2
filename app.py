@@ -96,23 +96,22 @@ def train_model(df):
 def score_leads(df, model, le_ind, le_stage):
     df = df.copy()
     
-    # 1. Force numeric types and handle non-numeric garbage (like "N/A" or "$100")
-    df['budget_k'] = pd.to_numeric(df['budget_k'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce')
-    df['employees'] = pd.to_numeric(df['employees'], errors='coerce')
-    df['engagement_score'] = pd.to_numeric(df['engagement_score'], errors='coerce')
+    # 1. Clean the data first (to avoid the ValueError from before)
+    df['budget_k'] = pd.to_numeric(df['budget_k'], errors='coerce').fillna(0)
+    df['employees'] = pd.to_numeric(df['employees'], errors='coerce').fillna(1)
+    df['engagement_score'] = pd.to_numeric(df['engagement_score'], errors='coerce').fillna(0)
 
-    # 2. Fill ANY remaining NaNs (missing values) with logical defaults
-    # This is the step that prevents the ValueError
-    df['budget_k'] = df['budget_k'].fillna(0)
-    df['employees'] = df['employees'].fillna(1)
-    df['engagement_score'] = df['engagement_score'].fillna(df['engagement_score'].median() if not df['engagement_score'].empty else 0)
+    # 2. CREATE the temporary columns (This fixes the KeyError)
+    # This ensures that if a new industry appears in your CSV that the model 
+    # doesn't know, it defaults to the first known industry instead of crashing.
+    df["industry_s"] = df["industry"].apply(
+        lambda x: x if x in le_ind.classes_ else le_ind.classes_[0]
+    )
+    df["deal_stage_s"] = df["deal_stage"].apply(
+        lambda x: x if x in le_stage.classes_ else le_stage.classes_[0]
+    )
     
-    # 3. Handle categorical missing values
-    df['industry'] = df['industry'].fillna('SaaS')
-    df['deal_stage'] = df['deal_stage'].fillna('Discovery')
-
-    # ... (rest of your encoding logic remains the same)
-    
+    # 3. Create the features for the model
     X = pd.DataFrame({
         "budget_k":         df["budget_k"],
         "employees":        df["employees"],
@@ -121,13 +120,16 @@ def score_leads(df, model, le_ind, le_stage):
         "deal_stage_enc":   le_stage.transform(df["deal_stage_s"]),
     })
     
-    # Now this will run safely without the ValueError
+    # 4. Predict
     probs = model.predict_proba(X)[:, 1]
     df["conversion_prob"] = (probs * 100).round(1)
     df["priority"] = pd.cut(df["conversion_prob"],
-                            bins=[0,40,65,100], labels=["Low","Medium","High"])
+                            bins=[-1, 40, 65, 101], 
+                            labels=["Low", "Medium", "High"])
     df["strategy"] = df.apply(_strategy, axis=1)
-    return df.drop(columns=["industry_s","deal_stage_s"], errors="ignore")
+    
+    # 5. Clean up temporary columns before returning
+    return df.drop(columns=["industry_s", "deal_stage_s"], errors="ignore")
 
 def _strategy(row):
     p, stage = row["conversion_prob"], row.get("deal_stage","")
