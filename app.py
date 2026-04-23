@@ -238,7 +238,7 @@ with col_left:
                "strategy":"Strategy"}
     styled = (df[cols].rename(columns=renames)
               .style
-              .applymap(color_prob, subset=["Conv. Prob (%)"])
+              .map(color_prob, subset=["Conv. Prob (%)"])
               .format({"Conv. Prob (%)":"{:.1f}","Budget ($k)":"{:,}"}))
     st.dataframe(styled, use_container_width=True, height=300)
 
