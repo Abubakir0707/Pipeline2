@@ -206,13 +206,14 @@ with st.sidebar:
 
     df_all = st.session_state.df_scored
    # Create a safe, sorted list of industry strings
+   # Create a safe, sorted list by forcing everything to a string first
     industry_options = sorted(df_all["industry"].astype(str).unique())
-        
-     # Update the multiselect to use these options
+    
+    # Update the multiselect to use this clean list
     industries = st.multiselect(
-            "Industry",
-            options=industry_options,
-            default=industry_options
+        "Industry",
+        options=industry_options,
+        default=industry_options
     )
     bmin,bmax    = int(df_all["budget_k"].min()), int(df_all["budget_k"].max())
     budget_range = st.slider("Budget ($k)", bmin, bmax, (bmin, bmax))
