@@ -22,6 +22,10 @@ st.markdown("""
                       border-radius:20px; font-size:12px; font-weight:600; }
     .priority-low   { background:#FCEBEB; color:#791F1F; padding:2px 10px;
                       border-radius:20px; font-size:12px; font-weight:600; }
+    .trello-card    { background:#F0F4FF; border-left:4px solid #0052CC;
+                      border-radius:6px; padding:10px 14px; margin-bottom:8px; }
+    .trello-card h4 { margin:0 0 4px 0; font-size:14px; color:#172B4D; }
+    .trello-card p  { margin:0; font-size:12px; color:#5E6C84; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,12 +90,10 @@ def _strategy(row):
 
 def score_leads(df, model, le_ind, le_stage):
     df = df.copy()
-    # Clean numeric data
     df['budget_k'] = pd.to_numeric(df['budget_k'], errors='coerce').fillna(0)
     df['employees'] = pd.to_numeric(df['employees'], errors='coerce').fillna(1)
     df['engagement_score'] = pd.to_numeric(df['engagement_score'], errors='coerce').fillna(0)
 
-    # Handle categorical unknowns
     df["industry_s"] = df["industry"].apply(lambda x: x if x in le_ind.classes_ else le_ind.classes_[0])
     df["deal_stage_s"] = df["deal_stage"].apply(lambda x: x if x in le_stage.classes_ else le_stage.classes_[0])
     
@@ -115,43 +117,48 @@ if "df_scored" not in st.session_state:
     st.session_state.update({"df_scored": score_leads(SAMPLE_DATA,m,li,ls), "model":m, "le_ind":li, "le_stage":ls})
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "trello_connected" not in st.session_state: st.session_state.trello_connected = False
+if "selected_list_id" not in st.session_state: st.session_state.selected_list_id = None
+if "selected_list_name" not in st.session_state: st.session_state.selected_list_name = "—"
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Settings & Filters")
     
-    # Trello Connection
     with st.expander("🔑 Trello connection", expanded=not st.session_state.trello_connected):
         t_key = st.text_input("API Key", type="password")
         t_token = st.text_input("API Token", type="password")
         if st.button("Connect"):
             try:
-                st.session_state.boards = get_boards(t_key, t_token)
-                st.session_state.trello_key, st.session_state.trello_token = t_key, t_token
-                st.session_state.trello_connected = True
+                boards = get_boards(t_key, t_token)
+                st.session_state.update({"boards": boards, "trello_key": t_key, "trello_token": t_token, "trello_connected": True})
                 st.success("✅ Connected")
                 st.rerun()
             except Exception as e: st.error(f"Error: {e}")
 
-    # File Uploader (Supports CSV and Excel)
+    if st.session_state.trello_connected:
+        boards = st.session_state.boards
+        chosen_board = st.selectbox("Board", [b["name"] for b in boards])
+        board_id = next(b["id"] for b in boards if b["name"]==chosen_board)
+        lists = get_lists(board_id, st.session_state.trello_key, st.session_state.trello_token)
+        chosen_list = st.selectbox("List", [l["name"] for l in lists])
+        st.session_state.selected_list_id = next(l["id"] for l in lists if l["name"]==chosen_list)
+        st.session_state.selected_list_name = chosen_list
+
     uploaded = st.file_uploader("Upload Lead Data", type=["csv", "xlsx"])
     if uploaded:
         raw = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
         st.session_state.df_scored = score_leads(raw, st.session_state.model, st.session_state.le_ind, st.session_state.le_stage)
-        st.success(f"Loaded {len(raw)} leads")
 
     df_all = st.session_state.df_scored
-
-    # FIXED: TYPE-SAFE SORTING
+    # FIXED ERROR HERE: Force to string before sorting
     industry_options = sorted([str(x) for x in df_all["industry"].unique() if pd.notna(x)])
-    industries = st.multiselect("Industry", options=industry_options, default=industry_options)
-
-    # Filter sliders
+    industries = st.multiselect("Industry", industry_options, default=industry_options)
+    
     b_min, b_max = int(df_all["budget_k"].min()), int(df_all["budget_k"].max())
     budget_range = st.slider("Budget ($k)", b_min, b_max, (b_min, b_max))
     priorities = st.multiselect("Priority", ["High","Medium","Low"], default=["High","Medium","Low"])
 
-# ── Filtering & Main View ─────────────────────────────────────────────────────
+# ── Main View ─────────────────────────────────────────────────────────────────
 df = df_all[
     (df_all["industry"].astype(str).isin(industries)) & 
     (df_all["budget_k"].between(*budget_range)) & 
@@ -159,20 +166,32 @@ df = df_all[
 ].reset_index(drop=True)
 
 st.title("📊 Lead Scoring Manager")
-k1, k2, k3 = st.columns(3)
-k1.metric("🔥 High Priority", int((df["priority"]=="High").sum()))
-k2.metric("🎯 Avg Prob", f"{df['conversion_prob'].mean():.1f}%" if not df.empty else "0%")
-k3.metric("💰 Pipeline", f"${df['budget_k'].sum():,}k")
+col_left, col_right = st.columns([2, 1])
 
-# Data Table
-st.subheader("Lead Pipeline")
-st.dataframe(df.style.background_gradient(subset=["conversion_prob"], cmap="RdYlGn"), use_container_width=True)
+with col_left:
+    st.dataframe(df.style.background_gradient(subset=["conversion_prob"], cmap="RdYlGn"), use_container_width=True)
+    
+    if st.session_state.trello_connected and not df.empty:
+        st.subheader("📤 Push Lead to Trello")
+        lead_pick = st.selectbox("Choose lead", df["company"])
+        if st.button("Send to Trello"):
+            row = df[df["company"]==lead_pick].iloc[0]
+            create_card(st.session_state.selected_list_id, f"{row['company']} ({row['priority']})", f"Strategy: {row['strategy']}", st.session_state.trello_key, st.session_state.trello_token)
+            st.success(f"Pushed {lead_pick}!")
 
-# Trello Card Creation
-if st.session_state.trello_connected and not df.empty:
-    st.divider()
-    st.subheader("📤 Push to Trello")
-    lead_name = st.selectbox("Select lead", df["company"])
-    if st.button("Send to Trello"):
-        # Trello logic here...
-        st.success(f"Pushed {lead_name} to Trello!")
+with col_right:
+    st.subheader("💬 Trello notes")
+    if st.session_state.trello_connected:
+        chat_box = st.container(height=300)
+        with chat_box:
+            for msg in st.session_state.chat_history:
+                st.write(f"**{msg['role']}:** {msg['text']}")
+
+        with st.form("chat_form", clear_on_submit=True):
+            user_msg = st.text_area("Write a note")
+            if st.form_submit_button("Send"):
+                create_card(st.session_state.selected_list_id, "Note", user_msg, st.session_state.trello_key, st.session_state.trello_token)
+                st.session_state.chat_history.append({"role": "User", "text": user_msg})
+                st.rerun()
+    else:
+        st.info("Connect Trello to send notes.")
