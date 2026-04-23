@@ -95,10 +95,24 @@ def train_model(df):
 
 def score_leads(df, model, le_ind, le_stage):
     df = df.copy()
-    df["industry_s"]   = df["industry"].apply(
-        lambda x: x if x in le_ind.classes_   else le_ind.classes_[0])
-    df["deal_stage_s"] = df["deal_stage"].apply(
-        lambda x: x if x in le_stage.classes_ else le_stage.classes_[0])
+    
+    # 1. Force numeric types and handle non-numeric garbage (like "N/A" or "$100")
+    df['budget_k'] = pd.to_numeric(df['budget_k'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce')
+    df['employees'] = pd.to_numeric(df['employees'], errors='coerce')
+    df['engagement_score'] = pd.to_numeric(df['engagement_score'], errors='coerce')
+
+    # 2. Fill ANY remaining NaNs (missing values) with logical defaults
+    # This is the step that prevents the ValueError
+    df['budget_k'] = df['budget_k'].fillna(0)
+    df['employees'] = df['employees'].fillna(1)
+    df['engagement_score'] = df['engagement_score'].fillna(df['engagement_score'].median() if not df['engagement_score'].empty else 0)
+    
+    # 3. Handle categorical missing values
+    df['industry'] = df['industry'].fillna('SaaS')
+    df['deal_stage'] = df['deal_stage'].fillna('Discovery')
+
+    # ... (rest of your encoding logic remains the same)
+    
     X = pd.DataFrame({
         "budget_k":         df["budget_k"],
         "employees":        df["employees"],
@@ -106,6 +120,8 @@ def score_leads(df, model, le_ind, le_stage):
         "industry_enc":     le_ind.transform(df["industry_s"]),
         "deal_stage_enc":   le_stage.transform(df["deal_stage_s"]),
     })
+    
+    # Now this will run safely without the ValueError
     probs = model.predict_proba(X)[:, 1]
     df["conversion_prob"] = (probs * 100).round(1)
     df["priority"] = pd.cut(df["conversion_prob"],
