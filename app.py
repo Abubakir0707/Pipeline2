@@ -207,9 +207,10 @@ with st.sidebar:
     df_all = st.session_state.df_scored
    # Create a safe, sorted list of industry strings
    # Create a safe, sorted list by forcing everything to a string first
+    # STEP 1: Create a safe, clean list of strings first
     industry_options = sorted(df_all["industry"].astype(str).unique())
     
-    # Update the multiselect to use this clean list
+    # STEP 2: Use that clean list in the multiselect
     industries = st.multiselect(
         "Industry",
         options=industry_options,
